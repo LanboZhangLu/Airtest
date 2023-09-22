@@ -15,7 +15,7 @@ from airtest.utils.snippet import reg_cleanup, on_method_ready, ready_method, ki
 from airtest.utils.threadsafe import threadsafe_generator
 from airtest.core.android.cap_methods.base_cap import BaseCap
 from airtest import aircv
-
+from airtest.core.error import ScreenError
 
 LOGGING = get_logger(__name__)
 
@@ -176,7 +176,10 @@ class Minicap(BaseCap):
             )
         jpg_data = raw_data.split(b"for JPG encoder" + self.adb.line_breaker)[-1]
         jpg_data = jpg_data.replace(self.adb.line_breaker, b"\n")
-        return jpg_data
+        if jpg_data.startswith(b"\xff\xd8") and jpg_data.endswith(b"\xff\xd9"):
+            return jpg_data
+        else:
+            raise ScreenError("invalid jpg format")
 
     def _get_params(self, projection=None):
         """
@@ -235,6 +238,7 @@ class Minicap(BaseCap):
     @threadsafe_generator
     @on_method_ready('install_or_upgrade')
     def _get_stream(self, lazy=True):
+        self._cleanup_minicap()
         proc, nbsp, localport = self._setup_stream_server(lazy=lazy)
         s = SafeSocket()
         s.connect((self.adb.host, localport))
@@ -381,6 +385,29 @@ class Minicap(BaseCap):
         """
         LOGGING.debug("update_rotation: %s" % rotation)
         self._update_rotation_event.set()
+
+    def _cleanup_minicap(self):
+        """
+        Clean up the minicap process whose status is __skb_wait_for_more_packets
+        清理状态为__skb_wait_for_more_packets的minicap进程
+
+        Returns:
+
+        """
+        # 卡住的进程状态
+        TASK_INTERRUPTIBLE = "__skb_wait_for_more_packets"
+
+        try:
+            shell_output = self.adb.shell("ps -A| grep minicap")
+        except:
+            pass
+        else:
+            if len(shell_output) == 0:
+                return
+            for line in shell_output.split("\r\n"):
+                if TASK_INTERRUPTIBLE in line:
+                    pid = line.split()[1]
+                    self.adb.shell("kill %s" % pid)
 
     def _cleanup(self):
         """
